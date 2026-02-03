@@ -2,7 +2,7 @@
 
 YellFi is a next-generation DeFi automation prototype that lets users deploy ENS-named on-chain strategy agents that manage liquidity and execute rule-based trades using **Uniswap v4 hooks** and the **Yellow SDK** on the **Sepolia testnet**.
 
-Each strategy agent has a human-readable ENS identity and runs programmable rules for swaps, liquidity positioning, and rebalancing — with all actions verifiable on-chain.
+Each strategy agent has a human-readable ENS identity and runs programmable rules for swaps, liquidity positioning, and rebalancing with all actions verifiable on-chain.
 
 ---
 
