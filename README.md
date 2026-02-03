@@ -1,4 +1,4 @@
-# 🟡 YellFi — ENS-Named DeFi Strategy Agents (Sepolia)
+#  YellFi — ENS-Named DeFi Strategy Agents (Sepolia)
 
 YellFi is a next-generation DeFi automation prototype that lets users deploy ENS-named on-chain strategy agents that manage liquidity and execute rule-based trades using **Uniswap v4 hooks** and the **Yellow SDK** on the **Sepolia testnet**.
 
@@ -6,7 +6,7 @@ Each strategy agent has a human-readable ENS identity and runs programmable rule
 
 ---
 
-## 🚀 Overview
+##  Overview
 
 YellFi combines three core components:
 
@@ -18,7 +18,7 @@ Users deploy a strategy agent, assign it an ENS name, configure rules, and let i
 
 ---
 
-## 🧠 Key Features
+##  Key Features
 
 - ENS-named strategy agents
 - Rule-based DeFi automation
@@ -31,7 +31,7 @@ Users deploy a strategy agent, assign it an ENS name, configure rules, and let i
 
 ---
 
-## 🏗 Architecture
+##  Architecture
 
 ### Smart Contracts
 
@@ -85,7 +85,7 @@ Functions:
 
 ---
 
-## ⚙️ Tech Stack
+##  Tech Stack
 
 - Solidity
 - Uniswap v4 core + hooks
@@ -99,7 +99,7 @@ Functions:
 
 ---
 
-## 🔄 Execution Flow
+##  Execution Flow
 
 1. User deploys YellFi Strategy Agent
 2. ENS subname is created and linked
@@ -112,7 +112,7 @@ Functions:
 
 ---
 
-## 🧪 Testnet Only
+##  Testnet Only
 
 YellFi is currently designed for:
 
@@ -125,7 +125,7 @@ No real funds required.
 
 ---
 
-## 🧩 Example Strategy Rules
+##  Example Strategy Rules
 
 - Rebalance liquidity if price moves ±3%
 - Maintain token ratio in pool
@@ -134,7 +134,7 @@ No real funds required.
 
 ---
 
-## 🔧 Setup (Example)
+##  Setup (Example)
 
 ```bash
 git clone https://github.com/TeamCFS/Yellfi
