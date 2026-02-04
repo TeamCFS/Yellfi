@@ -109,14 +109,14 @@ forge test -vvv
 
 | Contract | Address |
 |----------|---------|
-| StrategyAgent | `0xeacaA7E2A7518DA96d6B4d92B2f367eBEd965b30` |
+| StrategyAgent | `0x1E1c3ac46e77e695e7d5A04FaaD04C66Bd659947` |
 | YellowExecutorAdapter | `0x6aF9e2d880cbB65f5e37Bd951BdA146e6D893f42` |
-| EnsSubnameMinter | `0xDAa52313A587Dc21247BC1D3D229ba21e99ebd17` |
+| EnsSubnameMinter | `0x73D78816ea4C9d7479475805aFb449E611EF4703` |
 
 View on Etherscan:
-- [StrategyAgent](https://sepolia.etherscan.io/address/0xeacaA7E2A7518DA96d6B4d92B2f367eBEd965b30)
+- [StrategyAgent](https://sepolia.etherscan.io/address/0x1E1c3ac46e77e695e7d5A04FaaD04C66Bd659947)
 - [YellowExecutorAdapter](https://sepolia.etherscan.io/address/0x6aF9e2d880cbB65f5e37Bd951BdA146e6D893f42)
-- [EnsSubnameMinter](https://sepolia.etherscan.io/address/0xDAa52313A587Dc21247BC1D3D229ba21e99ebd17)
+- [EnsSubnameMinter](https://sepolia.etherscan.io/address/0x73D78816ea4C9d7479475805aFb449E611EF4703)
 
 ## Backend Setup
 
