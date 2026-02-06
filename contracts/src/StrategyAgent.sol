@@ -33,6 +33,11 @@ contract StrategyAgent is IStrategyAgent, ReentrancyGuard, Ownable, Pausable {
     
     uint256 public constant MAX_RULES_PER_AGENT = 10;
     uint256 public constant MIN_COOLDOWN = 60; // 1 minute minimum
+
+    // Debug events for execution tracing
+    event ExecutionStarted(uint256 indexed agentId, uint256 ruleIndex, address tokenIn, address tokenOut, uint256 amountIn);
+    event ExecutionApproved(uint256 indexed agentId, address token, address spender, uint256 amount);
+    event ExecutionResult(uint256 indexed agentId, bool success, uint256 amountOut);
     uint256 public constant BASIS_POINTS = 10_000;
 
     modifier onlyAgentOwner(uint256 agentId) {
@@ -190,7 +195,7 @@ contract StrategyAgent is IStrategyAgent, ReentrancyGuard, Ownable, Pausable {
         uint256 ruleIndex,
         bytes calldata executionData
     ) external override nonReentrant onlyKeeperOrOwner(agentId) agentActive(agentId) {
-        require(canExecute(agentId, ruleIndex), "Cannot execute");
+        require(canExecute(agentId, ruleIndex), "Cannot execute: cooldown or disabled");
         
         Rule storage rule = _agentRules[agentId][ruleIndex];
         rule.lastExecuted = block.timestamp;
@@ -202,12 +207,22 @@ contract StrategyAgent is IStrategyAgent, ReentrancyGuard, Ownable, Pausable {
         );
         request.agentId = agentId;
 
-        // Approve executor for token transfer
-        IERC20(request.tokenIn).safeIncreaseAllowance(address(executor), request.amountIn);
+        emit ExecutionStarted(agentId, ruleIndex, request.tokenIn, request.tokenOut, request.amountIn);
+
+        // Validate sufficient balance
+        require(
+            _agentBalances[agentId][request.tokenIn] >= request.amountIn,
+            "Insufficient agent balance"
+        );
+
+        // Approve executor for token transfer (use forceApprove for compatibility)
+        IERC20(request.tokenIn).forceApprove(address(executor), request.amountIn);
+        emit ExecutionApproved(agentId, request.tokenIn, address(executor), request.amountIn);
         
         IYellowExecutorAdapter.ExecutionResult memory result = executor.execute(request);
+        emit ExecutionResult(agentId, result.success, result.amountOut);
         
-        require(result.success, "Execution failed");
+        require(result.success, "Executor failed");
 
         // Update balances
         _agentBalances[agentId][request.tokenIn] -= request.amountIn;

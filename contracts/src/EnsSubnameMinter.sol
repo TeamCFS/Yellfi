@@ -85,19 +85,21 @@ contract EnsSubnameMinter is IEnsSubnameMinter, Ownable {
         bytes32 labelHash = keccak256(bytes(label));
         node = keccak256(abi.encodePacked(parentNode, labelHash));
         
-        // Register subnode in ENS
-        ensRegistry.setSubnodeRecord(
-            parentNode,
-            labelHash,
-            owner,
-            resolver,
-            0 // TTL
-        );
-        
-        // Set resolver records
-        if (resolver != address(0)) {
-            IResolver(resolver).setAddr(node, owner);
-            IResolver(resolver).setText(node, "agentId", _uint256ToString(agentId));
+        // Register subnode in ENS (skip if parentNode is 0x0 - test mode)
+        if (parentNode != bytes32(0)) {
+            ensRegistry.setSubnodeRecord(
+                parentNode,
+                labelHash,
+                owner,
+                resolver,
+                0 // TTL
+            );
+            
+            // Set resolver records
+            if (resolver != address(0)) {
+                IResolver(resolver).setAddr(node, owner);
+                IResolver(resolver).setText(node, "agentId", _uint256ToString(agentId));
+            }
         }
         
         // Store mappings

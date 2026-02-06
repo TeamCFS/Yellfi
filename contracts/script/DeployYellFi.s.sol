@@ -91,7 +91,7 @@ contract DeployYellFi is Script {
         YellFiHook(hook).setStrategyAgent(strategyAgent);
         
         // Authorize strategy agent as executor caller
-        YellowExecutorAdapter(executor).setAuthorizedCaller(strategyAgent, true);
+        YellowExecutorAdapter(payable(executor)).setAuthorizedCaller(strategyAgent, true);
         
         // Authorize strategy agent as ENS minter
         EnsSubnameMinter(ensMinter).setAuthorizedMinter(strategyAgent, true);

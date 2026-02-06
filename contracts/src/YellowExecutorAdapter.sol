@@ -6,10 +6,32 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {PoolKey} from "v4-core/types/PoolKey.sol";
+import {Currency} from "v4-core/types/Currency.sol";
+import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
+import {IHooks} from "v4-core/interfaces/IHooks.sol";
+import {BalanceDelta} from "v4-core/types/BalanceDelta.sol";
+import {TickMath} from "v4-core/libraries/TickMath.sol";
+
+/// @title IPoolSwapTest
+/// @notice Interface for Uniswap V4 PoolSwapTest contract
+interface IPoolSwapTest {
+    struct TestSettings {
+        bool takeClaims;
+        bool settleUsingBurn;
+    }
+
+    function swap(
+        PoolKey memory key,
+        IPoolManager.SwapParams memory params,
+        TestSettings memory testSettings,
+        bytes memory hookData
+    ) external payable returns (BalanceDelta delta);
+}
 
 /// @title YellowExecutorAdapter
-/// @notice Adapter for executing swaps via Yellow SDK routing
-/// @dev Bridges on-chain strategy agents with Yellow SDK off-chain routing
+/// @notice Adapter for executing swaps via Uniswap V4 PoolSwapTest
+/// @dev Bridges on-chain strategy agents with Uniswap V4 pools
 contract YellowExecutorAdapter is IYellowExecutorAdapter, ReentrancyGuard, Ownable {
     using SafeERC20 for IERC20;
 
@@ -20,7 +42,10 @@ contract YellowExecutorAdapter is IYellowExecutorAdapter, ReentrancyGuard, Ownab
     // Authorized callers (strategy agent contracts)
     mapping(address => bool) public authorizedCallers;
     
-    // Yellow SDK router address (for actual execution)
+    // Uniswap V4 contracts
+    IPoolSwapTest public poolSwapTest;
+    
+    // Yellow SDK router address (for future use)
     address public yellowRouter;
     
     // Fee configuration
@@ -32,11 +57,23 @@ contract YellowExecutorAdapter is IYellowExecutorAdapter, ReentrancyGuard, Ownab
     
     // Slippage protection
     uint256 public maxSlippageBps = 500; // 5% default max slippage
+    
+    // Test mode - when false, executes real swaps via Uniswap V4
+    bool public testMode = false;
+    
+    // Pool configurations
+    mapping(address => mapping(address => PoolKey)) public poolKeys;
+    uint24 public defaultFee = 3000;
+    int24 public defaultTickSpacing = 60;
 
     event CallerAuthorized(address indexed caller, bool authorized);
     event YellowRouterUpdated(address indexed oldRouter, address indexed newRouter);
     event ProtocolFeeUpdated(uint256 oldFee, uint256 newFee);
     event FeeRecipientUpdated(address indexed oldRecipient, address indexed newRecipient);
+    event TestModeUpdated(bool enabled);
+    event PoolSwapTestUpdated(address indexed oldSwapTest, address indexed newSwapTest);
+    event PoolKeySet(address indexed token0, address indexed token1, uint24 fee);
+    event SwapExecuted(address indexed tokenIn, address indexed tokenOut, uint256 amountIn, uint256 amountOut);
 
     modifier onlyAuthorized() {
         require(authorizedCallers[msg.sender], "Not authorized");
@@ -50,6 +87,49 @@ contract YellowExecutorAdapter is IYellowExecutorAdapter, ReentrancyGuard, Ownab
     ) Ownable(_owner) {
         yellowRouter = _yellowRouter;
         feeRecipient = _feeRecipient;
+    }
+    
+    /// @notice Set the PoolSwapTest contract address
+    function setPoolSwapTest(address _poolSwapTest) external onlyOwner {
+        address oldSwapTest = address(poolSwapTest);
+        poolSwapTest = IPoolSwapTest(_poolSwapTest);
+        emit PoolSwapTestUpdated(oldSwapTest, _poolSwapTest);
+    }
+    
+    /// @notice Set pool key for a token pair
+    function setPoolKey(
+        address token0,
+        address token1,
+        uint24 fee,
+        int24 tickSpacing,
+        address hooks
+    ) external onlyOwner {
+        require(token0 < token1, "Token0 must be < token1");
+        
+        PoolKey memory key = PoolKey({
+            currency0: Currency.wrap(token0),
+            currency1: Currency.wrap(token1),
+            fee: fee,
+            tickSpacing: tickSpacing,
+            hooks: IHooks(hooks)
+        });
+        
+        poolKeys[token0][token1] = key;
+        poolKeys[token1][token0] = key;
+        
+        emit PoolKeySet(token0, token1, fee);
+    }
+    
+    /// @notice Set default pool parameters
+    function setDefaultPoolParams(uint24 _fee, int24 _tickSpacing) external onlyOwner {
+        defaultFee = _fee;
+        defaultTickSpacing = _tickSpacing;
+    }
+    
+    /// @notice Enable or disable test mode
+    function setTestMode(bool _testMode) external onlyOwner {
+        testMode = _testMode;
+        emit TestModeUpdated(_testMode);
     }
 
     /// @notice Execute a swap via Yellow SDK routing
@@ -84,33 +164,47 @@ contract YellowExecutorAdapter is IYellowExecutorAdapter, ReentrancyGuard, Ownab
         );
         
         uint256 gasStart = gasleft();
+        uint256 amountOut;
         
-        // Transfer tokens from caller
-        IERC20(request.tokenIn).safeTransferFrom(msg.sender, address(this), request.amountIn);
-        
-        // Calculate protocol fee
-        uint256 feeAmount = (request.amountIn * protocolFeeBps) / BASIS_POINTS;
-        uint256 swapAmount = request.amountIn - feeAmount;
-        
-        // Transfer fee
-        if (feeAmount > 0 && feeRecipient != address(0)) {
-            IERC20(request.tokenIn).safeTransfer(feeRecipient, feeAmount);
+        if (testMode) {
+            // Test mode: simulate swap without actual token transfers
+            // Just calculate the expected output (0.3% fee simulation)
+            uint256 feeAmount = (request.amountIn * protocolFeeBps) / BASIS_POINTS;
+            uint256 swapAmount = request.amountIn - feeAmount;
+            uint256 swapFee = (swapAmount * 30) / BASIS_POINTS; // 0.3% swap fee
+            amountOut = swapAmount - swapFee;
+            
+            // In test mode, we don't transfer tokens - just emit events
+            // The StrategyAgent will update its internal balances
+        } else {
+            // Production mode: actual token transfers
+            // Transfer tokens from caller
+            IERC20(request.tokenIn).safeTransferFrom(msg.sender, address(this), request.amountIn);
+            
+            // Calculate protocol fee
+            uint256 feeAmount = (request.amountIn * protocolFeeBps) / BASIS_POINTS;
+            uint256 swapAmount = request.amountIn - feeAmount;
+            
+            // Transfer fee
+            if (feeAmount > 0 && feeRecipient != address(0)) {
+                IERC20(request.tokenIn).safeTransfer(feeRecipient, feeAmount);
+            }
+            
+            // Execute swap via Yellow router
+            amountOut = _executeSwap(
+                request.tokenIn,
+                request.tokenOut,
+                swapAmount,
+                request.minAmountOut,
+                request.routeData
+            );
+            
+            // Validate slippage
+            require(amountOut >= request.minAmountOut, "Slippage exceeded");
+            
+            // Transfer output to caller
+            IERC20(request.tokenOut).safeTransfer(msg.sender, amountOut);
         }
-        
-        // Execute swap via Yellow router
-        uint256 amountOut = _executeSwap(
-            request.tokenIn,
-            request.tokenOut,
-            swapAmount,
-            request.minAmountOut,
-            request.routeData
-        );
-        
-        // Validate slippage
-        require(amountOut >= request.minAmountOut, "Slippage exceeded");
-        
-        // Transfer output to caller
-        IERC20(request.tokenOut).safeTransfer(msg.sender, amountOut);
         
         uint256 gasUsed = gasStart - gasleft();
         
@@ -199,77 +293,98 @@ contract YellowExecutorAdapter is IYellowExecutorAdapter, ReentrancyGuard, Ownab
 
     // Internal functions
 
-    /// @notice Execute swap via Yellow SDK router
-    /// @dev In production, this calls the actual Yellow SDK router contract
+    /// @notice Execute swap via Uniswap V4 PoolSwapTest
     function _executeSwap(
         address tokenIn,
         address tokenOut,
         uint256 amountIn,
         uint256 minAmountOut,
-        bytes calldata routeData
+        bytes calldata /* routeData */
     ) internal returns (uint256 amountOut) {
-        // Approve router
-        IERC20(tokenIn).safeIncreaseAllowance(yellowRouter, amountIn);
+        require(address(poolSwapTest) != address(0), "PoolSwapTest not set");
         
-        // In production: call Yellow SDK router with routeData
-        // For now: simulate execution (replace with actual router call)
+        // Get pool key
+        PoolKey memory key = _getPoolKey(tokenIn, tokenOut);
         
-        if (yellowRouter != address(0) && routeData.length > 0) {
-            // Decode route and execute
-            // bytes4 selector = bytes4(routeData[:4]);
-            // (bool success, bytes memory result) = yellowRouter.call(routeData);
-            // require(success, "Router call failed");
-            // amountOut = abi.decode(result, (uint256));
-            
-            // Placeholder: direct transfer simulation for testing
-            // In production, this would be the actual router call
-            amountOut = _simulateSwap(tokenIn, tokenOut, amountIn);
+        // Determine swap direction
+        bool zeroForOne = tokenIn < tokenOut;
+        
+        // Approve PoolSwapTest
+        IERC20(tokenIn).forceApprove(address(poolSwapTest), amountIn);
+        
+        // Build swap params - negative amountSpecified = exact input
+        IPoolManager.SwapParams memory params = IPoolManager.SwapParams({
+            zeroForOne: zeroForOne,
+            amountSpecified: -int256(amountIn),
+            sqrtPriceLimitX96: zeroForOne 
+                ? TickMath.MIN_SQRT_PRICE + 1 
+                : TickMath.MAX_SQRT_PRICE - 1
+        });
+        
+        IPoolSwapTest.TestSettings memory settings = IPoolSwapTest.TestSettings({
+            takeClaims: false,
+            settleUsingBurn: false
+        });
+        
+        // Record balance before
+        uint256 balanceBefore = IERC20(tokenOut).balanceOf(address(this));
+        
+        // Execute swap via PoolSwapTest
+        BalanceDelta delta = poolSwapTest.swap(key, params, settings, "");
+        
+        // Calculate amount out
+        if (zeroForOne) {
+            amountOut = uint256(int256(delta.amount1()));
         } else {
-            // Fallback: simple 1:1 simulation for testing
-            amountOut = _simulateSwap(tokenIn, tokenOut, amountIn);
+            amountOut = uint256(int256(delta.amount0()));
         }
         
-        require(amountOut >= minAmountOut, "Insufficient output");
+        // Verify with actual balance change
+        uint256 balanceAfter = IERC20(tokenOut).balanceOf(address(this));
+        uint256 actualReceived = balanceAfter - balanceBefore;
+        if (actualReceived > 0) {
+            amountOut = actualReceived;
+        }
+        
+        require(amountOut >= minAmountOut, "Slippage exceeded");
+        
+        emit SwapExecuted(tokenIn, tokenOut, amountIn, amountOut);
+    }
+    
+    /// @notice Get pool key for token pair
+    function _getPoolKey(address tokenIn, address tokenOut) internal view returns (PoolKey memory) {
+        (address token0, address token1) = tokenIn < tokenOut 
+            ? (tokenIn, tokenOut) 
+            : (tokenOut, tokenIn);
+        
+        PoolKey memory key = poolKeys[token0][token1];
+        
+        // Use default if not set
+        if (Currency.unwrap(key.currency0) == address(0)) {
+            key = PoolKey({
+                currency0: Currency.wrap(token0),
+                currency1: Currency.wrap(token1),
+                fee: defaultFee,
+                tickSpacing: defaultTickSpacing,
+                hooks: IHooks(address(0))
+            });
+        }
+        
+        return key;
     }
 
     /// @notice Estimate swap output
     function _estimateSwap(
-        address tokenIn,
-        address tokenOut,
-        uint256 amountIn,
-        bytes calldata /* routeData */
-    ) internal view returns (uint256) {
-        // In production: call Yellow SDK quote endpoint
-        // Simplified estimation for testing
-        return _simulateSwapEstimate(tokenIn, tokenOut, amountIn);
-    }
-
-    /// @notice Simulate swap for testing (replace with actual router in production)
-    function _simulateSwap(
-        address /* tokenIn */,
-        address tokenOut,
-        uint256 amountIn
-    ) internal view returns (uint256) {
-        // Simple simulation: assume 0.3% fee and 1:1 rate
-        // In production, this is replaced by actual Yellow SDK execution
-        uint256 fee = (amountIn * 30) / BASIS_POINTS;
-        uint256 amountOut = amountIn - fee;
-        
-        // Check we have enough output tokens (for testing)
-        uint256 balance = IERC20(tokenOut).balanceOf(address(this));
-        require(balance >= amountOut, "Insufficient liquidity");
-        
-        return amountOut;
-    }
-
-    /// @notice Simulate swap estimate
-    function _simulateSwapEstimate(
         address /* tokenIn */,
         address /* tokenOut */,
-        uint256 amountIn
+        uint256 amountIn,
+        bytes calldata /* routeData */
     ) internal pure returns (uint256) {
-        // Simple estimation: assume 0.3% fee and 1:1 rate
+        // Simplified estimation: assume 0.3% pool fee
         uint256 fee = (amountIn * 30) / BASIS_POINTS;
         return amountIn - fee;
     }
+    
+    /// @notice Receive ETH for native swaps
+    receive() external payable {}
 }
